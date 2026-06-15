@@ -17,8 +17,6 @@ Sentiment is a working lab for classical NLP. If you understand why every naive 
 
 ## The Concept
 
-![Sentiment pipeline: tokens → features → classifier → label](./assets/sentiment.svg)
-
 Classical sentiment is a two-step recipe.
 
 1. **Represent.** Turn the text into a feature vector. BoW, TF-IDF, or n-grams.
@@ -27,6 +25,10 @@ Classical sentiment is a two-step recipe.
 Naive Bayes is the dumbest model that works. Assume every feature is independent given the label. Estimate `P(word | positive)` and `P(word | negative)` from counts. At inference, multiply the probabilities. The "naive" independence assumption is laughably wrong and yet the results are shockingly strong. The reason: with sparse text features and moderate data, the classifier cares about which side each word leans toward more than how much.
 
 Logistic regression fixes the independence assumption. It learns a weight per feature, including negative weights. `not good` as a bigram feature gets a negative weight. Naive Bayes cannot do that for bigrams it has never labeled.
+
+```figure
+sentiment-logits
+```
 
 ## Build It
 

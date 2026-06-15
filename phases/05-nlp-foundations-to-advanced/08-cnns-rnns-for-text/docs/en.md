@@ -21,8 +21,6 @@ This lesson builds both, then names the failure that motivated attention.
 
 ## The Concept
 
-![TextCNN filters vs. RNN hidden state unrolling](./assets/cnn-rnn.svg)
-
 **TextCNN** (Kim, 2014). Tokens get embedded. A width-`k` 1D convolution slides a filter over consecutive `k`-grams of embeddings, producing a feature map. Global max-pooling over that map picks the strongest activation. Concatenate max-pooled outputs from several filter widths. Feed to a classifier head.
 
 Why it works. A filter is a learnable n-gram. Max-pooling is position-invariant, so "not good" fires the same feature at the start or middle of a review. Three filter widths with 100 filters each gives you 300 learned n-gram detectors. Training is parallel; no sequential dependency.
@@ -32,6 +30,10 @@ Why it works. A filter is a learnable n-gram. Max-pooling is position-invariant,
 Plain RNNs suffer vanishing gradients. The **LSTM** adds gates that decide what to forget, what to store, and what to output, stabilizing gradients through long sequences. The **GRU** simplifies LSTM to two gates; performs similarly with fewer parameters.
 
 **Bidirectional RNNs** run one RNN forward and another backward, concatenating hidden states. Every token's representation sees both left and right context. Essential for tagging tasks.
+
+```figure
+rnn-unroll
+```
 
 ## Build It
 

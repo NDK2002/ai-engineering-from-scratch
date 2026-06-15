@@ -18,6 +18,14 @@ const GLOSSARY_PATH = path.join(REPO_ROOT, 'glossary', 'terms.md');
 const OUTPUT_PATH = path.join(__dirname, 'data.js');
 
 const GITHUB_BASE = 'https://github.com/rohitg00/ai-engineering-from-scratch/tree/main/';
+const SITE_ORIGIN = 'https://aiengineeringfromscratch.com';
+
+// GITHUB_BASE lesson url -> site path "phases/<phase>/<lesson>"
+function lessonPath(url) {
+  if (!url) return null;
+  const m = url.match(/(phases\/[^/]+\/[^/]+)\/?$/);
+  return m ? m[1] : null;
+}
 
 // ─── Parse ROADMAP.md for lesson statuses ────────────────────────────
 function parseRoadmap(content) {
@@ -25,7 +33,7 @@ function parseRoadmap(content) {
   let currentPhase = null;
   let currentPhaseStatus = null;
 
-  for (const line of content.split('\n')) {
+  for (const line of content.split(/\r?\n/)) {
     // Match phase headers like: ## Phase 0: Setup & Tooling — ✅
     const phaseMatch = line.match(/^##\s+Phase\s+(\d+).*?—\s*(✅|🚧|⬚)/);
     if (phaseMatch) {
@@ -60,7 +68,7 @@ function parseReadme(content, roadmapStatuses) {
   // Phase 0 is in a <table> block, phases 1-19 are in <details> blocks
   // We'll parse line by line to extract phase headers and lesson tables
 
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   let currentPhase = null;
   let inLessonTable = false;
   let isCapstoneTable = false;
@@ -222,12 +230,50 @@ function parseReadme(content, roadmapStatuses) {
   return phases;
 }
 
-// ─── Parse glossary/terms.md ─────────────────────────────────────────
+// ─── Extract lesson summary + keywords from docs/en.md ───────────────
+/**
+ * Single-pass read of a lesson's docs/en.md.
+ *
+ * Returns:
+ *   summary  — first `> blockquote` line (the lesson's one-liner motto).
+ *   keywords — all `### H3` heading texts joined by ' · '.
+ *              H3 headings are the densest vocabulary in a lesson doc
+ *              (e.g. "Scaled dot-product · Causal masking · KV cache"),
+ *              so they extend search coverage without bloating data.js.
+ *
+ * Both fields are empty strings when the file is absent or has no
+ * matching content — expected for planned lessons with no docs yet.
+ */
+function extractLessonMeta(relPath) {
+  const docPath = path.join(REPO_ROOT, relPath, 'docs', 'en.md');
+  const result = { summary: '', keywords: '' };
+  try {
+    const lines = fs.readFileSync(docPath, 'utf8').split(/\r?\n/);
+    const h3s = [];
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!result.summary && line.startsWith('> ') && line.length > 3) {
+        const s = line.slice(2).trim();
+        result.summary = s.length > 180 ? s.slice(0, 177) + '…' : s;
+      }
+      if (line.startsWith('### ')) {
+        const heading = line.slice(4).trim();
+        if (heading) h3s.push(heading);
+      }
+    }
+    if (h3s.length) result.keywords = h3s.join(' · ');
+  } catch (_) {
+    // File absent or unreadable — expected for planned lessons.
+  }
+  return result;
+}
+
+// ─── Parse glossary/terms.md ──────────────────────────────────────────
 function parseGlossary(content) {
   const terms = [];
   let currentTerm = null;
 
-  for (const line of content.split('\n')) {
+  for (const line of content.split(/\r?\n/)) {
     // Match term headers: ### Agent or ### Adam (Optimizer)
     const termMatch = line.match(/^###\s+(.+)/);
     if (termMatch) {
@@ -263,9 +309,116 @@ function parseGlossary(content) {
   return terms;
 }
 
+// ─── Discover outputs/ artifacts (skills / prompts / agents) ──────────
+function parseFrontmatter(text) {
+  if (!text.startsWith('---')) return null;
+  const end = text.indexOf('\n---', 4);
+  if (end === -1) return null;
+  const block = text.slice(4, end);
+  const result = {};
+  for (const raw of block.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (!line || line.startsWith('#') || !line.includes(':')) continue;
+    const idx = line.indexOf(':');
+    const key = line.slice(0, idx).trim();
+    let value = line.slice(idx + 1).trim();
+    if (value.startsWith('[') && value.endsWith(']')) {
+      const inner = value.slice(1, -1).trim();
+      result[key] = inner
+        ? inner.split(',').map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean)
+        : [];
+    } else if ((value.startsWith('"') && value.endsWith('"')) ||
+               (value.startsWith("'") && value.endsWith("'"))) {
+      result[key] = value.slice(1, -1);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function discoverArtifacts() {
+  const artifacts = [];
+  const phasesDir = path.join(REPO_ROOT, 'phases');
+  if (!fs.existsSync(phasesDir)) return artifacts;
+  const VALID_TYPES = ['skill', 'prompt', 'agent'];
+  for (const phaseDirName of fs.readdirSync(phasesDir).sort()) {
+    const phaseMatch = phaseDirName.match(/^([0-9]{2})-([a-z0-9-]+)$/);
+    if (!phaseMatch) continue;
+    const phaseId = parseInt(phaseMatch[1], 10);
+    const phaseDir = path.join(phasesDir, phaseDirName);
+    for (const lessonDirName of fs.readdirSync(phaseDir).sort()) {
+      const lessonMatch = lessonDirName.match(/^([0-9]{2})-([a-z0-9-]+)$/);
+      if (!lessonMatch) continue;
+      const lessonId = parseInt(lessonMatch[1], 10);
+      const lessonRel = `phases/${phaseDirName}/${lessonDirName}`;
+      const outputsDir = path.join(phaseDir, lessonDirName, 'outputs');
+      if (fs.existsSync(outputsDir)) {
+        for (const file of fs.readdirSync(outputsDir).sort()) {
+          if (!file.endsWith('.md')) continue;
+          const stem = file.replace(/\.md$/, '');
+          const type = VALID_TYPES.find(t => stem.startsWith(`${t}-`));
+          if (!type) continue;
+          let meta = {};
+          try {
+            meta = parseFrontmatter(fs.readFileSync(path.join(outputsDir, file), 'utf8')) || {};
+          } catch (_) {}
+          artifacts.push({
+            kind: type,
+            name: (meta.name || stem).trim(),
+            description: (meta.description || '').trim(),
+            tags: Array.isArray(meta.tags) ? meta.tags : [],
+            phase: phaseId,
+            lesson: lessonId,
+            lessonPath: lessonRel,
+            file: `${lessonRel}/outputs/${file}`,
+          });
+        }
+      }
+      const missionPath = path.join(phaseDir, lessonDirName, 'mission.md');
+      if (fs.existsSync(missionPath)) {
+        let firstLine = '';
+        try {
+          firstLine = fs.readFileSync(missionPath, 'utf8').split(/\r?\n/)[0].replace(/^#\s+/, '').trim();
+        } catch (_) {}
+        artifacts.push({
+          kind: 'mission',
+          name: firstLine || `${lessonDirName} mission`,
+          description: '',
+          tags: [],
+          phase: phaseId,
+          lesson: lessonId,
+          lessonPath: lessonRel,
+          file: `${lessonRel}/mission.md`,
+        });
+      }
+    }
+  }
+  return artifacts;
+}
+
 // ─── Main build ──────────────────────────────────────────────────────
+// Write the git ref this deploy was built from, so lesson.html fetches docs
+// from the right branch (PR previews render their own edits, not main).
+function writeBuildMeta() {
+  let ref = process.env.VERCEL_GIT_COMMIT_REF || '';
+  if (!ref) {
+    try {
+      ref = require('child_process')
+        .execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8' })
+        .trim();
+    } catch (e) { ref = ''; }
+  }
+  if (!ref || ref === 'HEAD') ref = 'main';
+  const js = '// Auto-generated by build.js on each deploy — do not edit.\n'
+    + 'window.__AIFS_REF = ' + JSON.stringify(ref) + ';\n';
+  fs.writeFileSync(path.join(__dirname, 'build-meta.js'), js, 'utf8');
+  console.log('   wrote build-meta.js (ref: ' + ref + ')');
+}
+
 function build() {
   console.log('📖 Reading source files...');
+  writeBuildMeta();
 
   const readme = fs.readFileSync(README_PATH, 'utf8');
   const roadmap = fs.readFileSync(ROADMAP_PATH, 'utf8');
@@ -280,6 +433,22 @@ function build() {
   console.log('🔍 Parsing glossary/terms.md...');
   const glossaryTerms = parseGlossary(glossary);
 
+  console.log('🔍 Discovering outputs + Phase 14 missions...');
+  const artifacts = discoverArtifacts();
+
+  console.log('📚 Extracting lesson summaries + keywords from docs/en.md...');
+  let summarized = 0, withKeywords = 0;
+  for (const phase of phases) {
+    for (const lesson of phase.lessons) {
+      if (lesson.url) {
+        const relPath = lesson.url.replace(GITHUB_BASE, '').replace(/\/+$/, '');
+        const meta = extractLessonMeta(relPath);
+        if (meta.summary)  { lesson.summary  = meta.summary;  summarized++;   }
+        if (meta.keywords) { lesson.keywords = meta.keywords; withKeywords++; }
+      }
+    }
+  }
+
   // Stats
   let totalLessons = 0;
   let completeLessons = 0;
@@ -292,7 +461,9 @@ function build() {
   console.log(`   Phases: ${phases.length}`);
   console.log(`   Lessons: ${totalLessons}`);
   console.log(`   Complete: ${completeLessons}`);
+  console.log(`   Summaries: ${summarized}, Keywords: ${withKeywords}`);
   console.log(`   Glossary terms: ${glossaryTerms.length}`);
+  console.log(`   Artifacts: ${artifacts.length}`);
 
   // Generate data.js
   const output = `// Auto-generated by build.js — do not edit manually.
@@ -301,10 +472,130 @@ function build() {
 const PHASES = ${JSON.stringify(phases, null, 2)};
 
 const GLOSSARY = ${JSON.stringify(glossaryTerms, null, 2)};
+
+const ARTIFACTS = ${JSON.stringify(artifacts, null, 2)};
 `;
 
   fs.writeFileSync(OUTPUT_PATH, output, 'utf8');
   console.log(`\n✅ Generated ${OUTPUT_PATH}`);
+
+  syncCounts(totalLessons, phases.length, artifacts.length);
+  syncReadme(totalLessons);
+  writeSitemap(phases, glossaryTerms.length);
+  writeLlms(phases, glossaryTerms.length, artifacts.length);
+}
+
+// ─── sitemap.xml from the same PHASES the site renders ───────────────────
+function writeSitemap(phases, glossaryCount) {
+  const today = new Date().toISOString().slice(0, 10);
+  const urls = [
+    { loc: '/', priority: '1.0', freq: 'weekly' },
+    { loc: '/catalog.html', priority: '0.8', freq: 'weekly' },
+    { loc: '/prereqs.html', priority: '0.7', freq: 'monthly' },
+  ];
+  if (glossaryCount > 0) urls.push({ loc: '/glossary.html', priority: '0.6', freq: 'monthly' });
+  for (const phase of phases) {
+    for (const l of phase.lessons) {
+      const p = lessonPath(l.url);
+      if (p) urls.push({ loc: '/lesson.html?path=' + p, priority: '0.6', freq: 'monthly' });
+    }
+  }
+  const body = urls.map(u =>
+    `  <url>\n    <loc>${SITE_ORIGIN}${u.loc}</loc>\n` +
+    `    <lastmod>${today}</lastmod>\n    <changefreq>${u.freq}</changefreq>\n` +
+    `    <priority>${u.priority}</priority>\n  </url>`).join('\n');
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</urlset>\n`;
+  fs.writeFileSync(path.join(__dirname, 'sitemap.xml'), xml, 'utf8');
+  console.log(`   wrote sitemap.xml (${urls.length} URLs)`);
+}
+
+// ─── llms.txt: a link-rich map of the curriculum for AI agents ───────────
+function writeLlms(phases, glossaryCount, artifactCount) {
+  let total = 0;
+  phases.forEach(p => { total += p.lessons.filter(l => lessonPath(l.url)).length; });
+  let out = `# AI Engineering from Scratch\n\n`;
+  out += `> A free, open-source curriculum that builds every core AI algorithm by hand — ${total} lessons across ${phases.length} phases, from linear algebra to autonomous agents. Python, TypeScript, Rust, Julia.\n\n`;
+  out += `Canonical site: ${SITE_ORIGIN}\n`;
+  out += `Source: https://github.com/rohitg00/ai-engineering-from-scratch\n`;
+  out += `Glossary terms: ${glossaryCount} · Reusable outputs (prompts/skills/agents): ${artifactCount}\n\n`;
+  for (const phase of phases) {
+    out += `## Phase ${phase.id}: ${phase.name}\n`;
+    if (phase.desc) out += `${phase.desc}\n`;
+    out += `\n`;
+    for (const l of phase.lessons) {
+      const p = lessonPath(l.url);
+      if (!p) continue;
+      const note = l.summary ? ` — ${l.summary}` : '';
+      out += `- [${l.name}](${SITE_ORIGIN}/lesson.html?path=${p})${note}\n`;
+    }
+    out += `\n`;
+  }
+  out += `## Optional\n`;
+  out += `- [Catalog](${SITE_ORIGIN}/catalog.html) — full searchable lesson index\n`;
+  out += `- [Roadmap](${SITE_ORIGIN}/prereqs.html) — prerequisite ordering across phases\n`;
+  if (glossaryCount > 0) out += `- [Glossary](${SITE_ORIGIN}/glossary.html) — plain-language definitions of ${glossaryCount} terms\n`;
+  fs.writeFileSync(path.join(__dirname, 'llms.txt'), out, 'utf8');
+  console.log(`   wrote llms.txt`);
+}
+
+// ─── Regenerate README stats block + lessons badge from source ───────────
+function syncReadme(lessons) {
+  const readmePath = path.join(REPO_ROOT, 'README.md');
+  if (!fs.existsSync(readmePath)) return;
+  let md = fs.readFileSync(readmePath, 'utf8');
+  const before = md;
+
+  // Keep the lessons badge in sync with the live count (URL value + alt text)
+  md = md.replace(/badge\/lessons-\d+-/g, `badge/lessons-${lessons}-`);
+  md = md.replace(/alt="\d+ lessons"/g, `alt="${lessons} lessons"`);
+
+  // Regenerate the traffic proof block from site/stats.json
+  const statsPath = path.join(__dirname, 'stats.json');
+  if (fs.existsSync(statsPath)) {
+    try {
+      const s = JSON.parse(fs.readFileSync(statsPath, 'utf8'));
+      const fmt = n => Number(n).toLocaleString('en-US');
+      const block =
+        '<!-- STATS:START (generated from site/stats.json by build.js — do not edit by hand) -->\n' +
+        `<p align="center"><sub><b>${fmt(s.visitors30d)}</b> readers &nbsp;·&nbsp; ` +
+        `<b>${fmt(s.pageViews30d)}</b> page views in the last ${s.period} &nbsp;·&nbsp; ` +
+        `as of ${s.updated}</sub></p>\n` +
+        '<!-- STATS:END -->';
+      const statsRe = /<!-- STATS:START[\s\S]*?<!-- STATS:END -->/;
+      if (statsRe.test(md)) {
+        md = md.replace(statsRe, block);
+      } else {
+        // Self-heal: re-insert the block if the markers were removed/mangled
+        md = md.replace(/\n## How this works/, `\n${block}\n\n## How this works`);
+      }
+    } catch (err) {
+      console.warn(`⚠️  README stats sync skipped: ${err.message}`);
+    }
+  }
+
+  if (md !== before) {
+    fs.writeFileSync(readmePath, md, 'utf8');
+    console.log('   synced README stats + lessons badge');
+  }
+}
+
+// ─── Keep marketing counts in sync (single source of truth = this build) ──
+function syncCounts(lessons, phaseCount, outputs) {
+  const targets = ['index.html', 'catalog.html', 'lesson.html', 'prereqs.html', 'cmdpalette.js'];
+  for (const f of targets) {
+    const p = path.join(__dirname, f);
+    if (!fs.existsSync(p)) continue;
+    const before = fs.readFileSync(p, 'utf8');
+    const after = before
+      .replace(/\b\d+( AI engineering)? lessons\b/g, `${lessons}$1 lessons`)
+      .replace(/\b\d+ phases\b/g, `${phaseCount} phases`)
+      .replace(/\b\d+ outputs\b/g, `${outputs} outputs`);
+    if (after !== before) {
+      fs.writeFileSync(p, after, 'utf8');
+      console.log(`   synced counts in ${f}`);
+    }
+  }
 }
 
 build();

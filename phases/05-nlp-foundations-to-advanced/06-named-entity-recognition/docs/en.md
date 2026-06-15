@@ -17,8 +17,6 @@ This lesson walks the classical path (rule-based, HMM, CRF) into the modern one 
 
 ## The Concept
 
-![NER tagging: BIO schema + CRF+BiLSTM pipeline](./assets/ner.svg)
-
 **BIO tagging** (or BILOU) turns entity extraction into a sequence-labeling problem. Label each token with `B-TYPE` (beginning of entity), `I-TYPE` (inside entity), or `O` (outside any entity).
 
 ```
@@ -45,6 +43,10 @@ The architecture progression:
 - **CRF.** Conditional Random Field. Like HMM but discriminative, so you can mix arbitrary features (word shape, capitalization, neighboring words). Still the classical production workhorse in 2026 for low-resource deployments.
 - **BiLSTM-CRF.** Neural features instead of hand-crafted. LSTM reads the sentence both directions, CRF layer on top enforces consistent tag sequences.
 - **Transformer-based.** Fine-tune BERT with a token-classification head. Best accuracy. Most compute.
+
+```figure
+ner-bio-tagging
+```
 
 ## Build It
 

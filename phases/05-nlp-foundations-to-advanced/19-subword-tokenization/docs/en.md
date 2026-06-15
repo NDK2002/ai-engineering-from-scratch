@@ -35,6 +35,10 @@ Rule of thumb:
 - **Fast inference against GPT vocab:** tiktoken (cl100k_base, o200k_base).
 - **Both:** HF Tokenizers — one library, training + serving.
 
+```figure
+bpe-merge
+```
+
 ## Build It
 
 ### Step 1: BPE from scratch
@@ -132,7 +136,7 @@ Vocabulary size is a scaling decision, not a constant. Rough heuristic: 32k for 
 
 ## Ship It
 
-Save as `outputs/skill-tokenizer-picker.md`:
+Save as `outputs/skill-bpe-vs-wordpiece.md`:
 
 ```markdown
 ---

@@ -19,8 +19,6 @@ This lesson builds bag of words, then TF-IDF, from scratch. Then shows scikit-le
 
 ## The Concept
 
-![BoW vs TF-IDF representation flow](./assets/bow-tfidf.svg)
-
 **Bag of Words (BoW)** throws away order. For each document, count how many times each vocabulary word appears. Vector length is the vocabulary size. Position `i` is the count of word `i`.
 
 **TF-IDF** reweights BoW. A word that appears in every document is uninformative, so scale it down. A word rare across the corpus but frequent in a single document is signal, so scale it up.
@@ -33,6 +31,10 @@ TF-IDF(w, d) = TF(w, d) * IDF(w)
 Where `TF` is term frequency in the document, `df` is document frequency (how many docs contain the word), `N` is total documents. The `log` keeps the weight bounded for ubiquitous words.
 
 Key property: both produce sparse vectors with interpretable axes. You can look at a trained classifier's weights and read which words push a document toward each class. You cannot do this with a 768-dimensional BERT embedding.
+
+```figure
+bow-tfidf
+```
 
 ## Build It
 
